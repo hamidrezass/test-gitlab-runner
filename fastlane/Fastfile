@@ -1,0 +1,118 @@
+require 'json'
+require 'net/http'
+require 'uri'
+require 'time'
+
+# Define the default platform as Android for this Fastlane configuration
+default_platform(:android)
+
+# Define the configuration for the Android platform
+platform :android do
+
+  # The `before_all` block is executed before any lane runs. It initializes environment variables
+  before_all do
+    ENV["SLACK_URL"]  # Slack URL environment variable (though it's unused in this script)
+
+    # Set the VERSION_NAME if not already defined, extracting it from `app/build.gradle`
+    ENV["VERSION_NAME"] ||= `grep -E 'versionName "' app/build.gradle | cut -d '"' -f2`.strip
+  end
+
+  # Lane for running non-instrumented unit tests
+  desc "nonInstrumental unit test"
+  lane :unitTest do
+    gradle(task: "testDebugUnitTest")
+  end
+
+  # Lane for running instrumental Android tests (connected tests)
+  desc "instrumental Android test"
+  lane :androidTest do
+    gradle(task: "connectedDebugAndroidTest")
+  end
+
+  # Lane for building and submitting a new Beta version to Slack
+  desc "Submit a new Beta Build to Slack"
+  lane :build do
+    gradle(task: "clean assembleDebug")  # Clean and assemble the debug APK
+    upload_to_slack()  # Call the private lane for uploading to Slack
+  end
+
+  # Private lane for uploading the generated APK to Slack
+  private_lane :upload_to_slack do |options|
+    # Extract necessary details from the lane context and environment variables
+    file_path = lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH]
+    file_name = "mojib-debug.#{ENV['VERSION_NAME']}.#{Time.now.strftime('%Y-%m-%d.%H:%M')}.apk"
+    channel_id = ENV["CHANNEL_ID"]
+    file_size = File.size(file_path)
+    git_branch = ENV["GIT_BRANCH"]
+    git_author = ENV["GIT_AUTHOR"]
+    commit_message = ENV["COMMIT_MESSAGE"]
+    merge_request_description = ENV["MERGE_REQUEST_DESCRIPTION"]
+
+    # Prepare the initial message to be sent to Slack
+    initial_comment = <<-MESSAGE
+    Hello guys,
+    The new version is ready with the following details :
+
+    Details:
+
+    - Git Branch:   #{git_branch}
+    - Commit Message:  #{commit_message}
+
+    Thanks to all,
+    MESSAGE
+
+    # Log the file upload action to the console
+    UI.message("Uploading #{file_name} to Slack")
+
+    # Step 1: Get upload URL from Slack's API
+    uri = URI("https://slack.com/api/files.getUploadURLExternal")
+    response = Net::HTTP.post_form(uri, {
+      "token" => ENV["ACCESS_TOKEN"],
+      "filename" => file_name,
+      "length" => file_size
+    })
+
+    # Parse the response from Slack API
+    get_url_response = JSON.parse(response.body)
+    if !get_url_response["ok"]
+      UI.user_error!("Error getting upload URL from Slack: #{get_url_response['error']}")
+      return
+    end
+
+    upload_url = get_url_response["upload_url"]
+    file_id = get_url_response["file_id"]
+
+    # Step 2: Upload the file using cURL command
+    curl_command = <<-CURL
+      curl -X POST \
+      -F file=@#{file_path} \
+      #{upload_url}
+    CURL
+
+    sh curl_command  # Execute the cURL command to upload the file
+
+    # Step 3: Complete the file upload process by notifying Slack
+    uri = URI("https://slack.com/api/files.completeUploadExternal")
+    request = Net::HTTP::Post.new(uri)
+    request["Authorization"] = "Bearer #{ENV["ACCESS_TOKEN"]}"
+    request["Content-Type"] = "application/json"
+    request.body = {
+      "files" => [{"id" => file_id, "title" => file_name}],
+      "channel_id" => channel_id,
+      "initial_comment" => initial_comment
+    }.to_json
+
+    # Make the request to Slack to finalize the upload
+    response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) do |http|
+      http.request(request)
+    end
+
+    # Parse and handle the final response from Slack
+    complete_upload_response = JSON.parse(response.body)
+    if complete_upload_response["ok"]
+      UI.success("Successfully uploaded #{file_name} to Slack")
+    else
+      UI.user_error!("Error uploading file to Slack: #{complete_upload_response['error']}")
+    end
+  end
+end

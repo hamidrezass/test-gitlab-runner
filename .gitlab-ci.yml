@@ -1,0 +1,85 @@
+stages:
+  - test
+  - build_and_test
+  - qa
+  - deploy
+
+# Define environment variables used in the pipeline
+variables:
+  MERGE_REQUEST_DESCRIPTION: $CI_MERGE_REQUEST_DESCRIPTION
+  COMMIT_MESSAGE: $CI_COMMIT_MESSAGE
+  GIT_BRANCH: $CI_COMMIT_REF_NAME
+  GIT_AUTHOR: $CI_COMMIT_AUTHOR
+  GRADLE_FILE_PATH: "app/build.gradle"
+
+# Cache dependencies to speed up pipeline execution
+cache:
+  key:
+    files:
+      - Gemfile.lock  # Cache based on the Gemfile.lock
+  paths:
+    - vendor/bundle  # Cache the vendor/bundle directory for Ruby dependencies
+
+
+# Define the `before_script` that runs before any job in the pipeline
+before_script:
+  - export VERSION_NAME=$(grep -E 'versionName "' $GRADLE_FILE_PATH | cut -d '"' -f2)  # Extract versionName from build.gradle
+  - echo "the version name is  $VERSION_NAME"  # Log the version name
+  - bundle config set --local path 'vendor/bundle'  # Set the local bundle path
+  - bundle check || bundle install --jobs $(nproc)  # Check and install Ruby dependencies if necessary
+
+# Job to run unit tests in the "test" stage
+unit_test:
+  image: fabernovel/android:api-33-v1.8.0  # Use the Android Docker image with API 33
+  stage: test
+  script:
+    - set -e
+    - echo "Running unit tests..."
+    - bundle exec fastlane unitTest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"  # Only run on the 'develop' branch
+
+# Job to build the APK and Android Test APK in the "build_and_test" stage
+build_artifact:
+  image: fabernovel/android:api-33-v1.8.0  # Use the Android Docker image with API 33
+  stage: build_and_test
+  script:
+    - set -e
+    - apt update -y && apt install -y curl  # Install curl (if not available)
+    - curl -s https://gitlab.com/gitlab-org/incubation-engineering/mobile-devops/download-secure-files/-/raw/main/installer | bash
+    - ./gradlew assembleDebug assembleDebugAndroidTest
+  artifacts:
+    paths:
+      - app/build/outputs/apk/debug/app-debug.apk
+      - app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+
+# Job to run Android instrumentation tests in the "build_and_test" stage
+android_test:
+  image: fabernovel/android:api-34-gcloud-ndk-v1.8.0  # Use a different Android Docker image (API 34, with Google Cloud SDK and NDK)
+  stage: build_and_test
+  script:
+    - set -e
+    - echo "Running instrumentation tests..."
+    - gcloud auth activate-service-account --key-file=$GOOGLE_APPLICATION_CREDENTIALS_JSON
+    - gcloud config set project your_firebase_project_id
+    - gcloud firebase test android run --type=instrumentation --app app/build/outputs/apk/debug/app-debug.apk --test app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk --device model=Pixel2,version=28 --timeout 5m
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
+  needs:
+    - build_artifact
+
+# Job to build the APK for QA in the "qa" stage
+build_to_qa:
+  image: fabernovel/android:api-33-v1.8.0
+  stage: qa
+  script:
+    - apt update -y && apt install -y curl
+    - curl -s https://gitlab.com/gitlab-org/incubation-engineering/mobile-devops/download-secure-files/-/raw/main/installer | bash  # Install a secure file (custom script)
+    - bundle exec fastlane build
+  artifacts:
+    paths:
+      - app/build/outputs/apk/debug/app-debug.apk
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop"
