@@ -40,7 +40,7 @@ platform :android do
   private_lane :upload_to_slack do |options|
     # Extract necessary details from the lane context and environment variables
     file_path = lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH]
-    file_name = "mojib-debug.#{ENV['VERSION_NAME']}.#{Time.now.strftime('%Y-%m-%d.%H:%M')}.apk"
+    file_name = "app-debug.#{ENV['VERSION_NAME']}.#{Time.now.strftime('%Y-%m-%d.%H:%M')}.apk"
     channel_id = ENV["CHANNEL_ID"]
     file_size = File.size(file_path)
     git_branch = ENV["GIT_BRANCH"]
