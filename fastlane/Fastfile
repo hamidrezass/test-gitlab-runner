@@ -57,6 +57,8 @@ platform :android do
 
     - Git Branch:   #{git_branch}
     - Commit Message:  #{commit_message}
+    - Merge Request Description:  #{merge_request_description}
+    - Git Author:  #{git_author}
 
     Thanks to all,
     MESSAGE
