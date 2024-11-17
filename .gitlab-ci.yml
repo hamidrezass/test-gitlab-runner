@@ -2,7 +2,6 @@ stages:
   - test
   - build_and_test
   - qa
-  - deploy
 
 # Define environment variables used in the pipeline
 variables:

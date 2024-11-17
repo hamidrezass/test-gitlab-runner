@@ -13,19 +13,19 @@ platform :android do
 
     desc "nonInstrumental unit test"
     lane :unitTest do
-      gradle(task: "testGoogleDebugUnitTest")
+      gradle(task: "testDebugUnitTest")
     end
 
 
     desc "instrumental  Android  test"
     lane :androidTest do
-      gradle(task: "connectedGoogleDebugAndroidTest")
+      gradle(task: "connectedDebugAndroidTest")
     end
 
 
    desc "Submit a new Beta Build to Slack"
    lane :build do
-    gradle(task: "clean assembleGoogleDebug")
+    gradle(task: "clean assembleDebug")
     upload_to_slack()
   end
 
